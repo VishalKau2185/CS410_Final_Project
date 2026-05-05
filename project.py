@@ -26,12 +26,15 @@ class Engine():
 
     def __init__(self, dataset_path, vocab_len, title_col, collection_col):
         self.path = dataset_path
-        self.df_orig = pd.read_csv(self.path)
+        self.df_orig = pd.read_csv(self.path).drop_duplicates()
         print(self.df_orig.head())
         
+        # create regex to quickly get rid of punctuation and numbers
         self.punctuations = '\'\"\\,<>./?@#$%^&*_~/!()-=[]{};:'
         self.punct_re = "[" + re.escape(self.punctuations) + "0-9" + "]"
 
+        # load stopwords, stemmer
+        # initialize vocab, title column, and collection column
         nltk.download('stopwords')
         self.stop_words = set(stopwords.words("english"))
         self.vocab = np.zeros(vocab_len)
@@ -55,6 +58,8 @@ class Engine():
         vocab = [w for w, _ in counter.most_common(self.vocab.shape[0])]
 
         self.vocab = np.array(vocab)
+
+        # calculate AVDL
         self.avdl = self.df_clean[self.collection_col] \
             .apply(lambda x: len(str(x).split())).mean()
 
@@ -73,6 +78,7 @@ class Engine():
         plot = re.sub(self.punct_re, " ", plot)
         plot = re.sub(r"\s+", " ", plot)
         
+        # stem words and remove stop words
         words=plot.split()
         stemmed = []
         for word in words:
@@ -105,6 +111,7 @@ class Engine():
                 vocab = np.append(vocab, w)
         self.vocab = vocab
 
+    # compute IDF vector
     def compute_IDF(self, M, collection):
         self.IDF  = np.zeros(self.vocab.size)
         allWordsDocFreq = {}
@@ -117,21 +124,25 @@ class Engine():
             df = allWordsDocFreq.get(w, 1)
             self.IDF[idx] = math.log((M+1)/df)
 
+    # implements BM25 with TF-IDF and document length normalization
     def text2TFIDF(self, text, applyBM25_and_IDF=False):
         vocab = self.vocab
         tfidfVector = np.zeros(vocab.size)
         wc = Counter(text.split())
         for idx, word in enumerate(vocab):
             if word in wc:
+                # for query and document
                 c = wc[word]
                 tfidfVector[idx] = c
                 if applyBM25_and_IDF:
+                    # for document only
                     d = len(text.split(" "))
                     normalizer = 1 - self.b + (self.b * d / self.avdl)
                     tfidfVector[idx] *= (self.K + 1)/((self.K*normalizer) + c)
                     tfidfVector[idx] *= self.IDF[idx]
         return tfidfVector
     
+    # compute relevance scores for all docs given a query
     def tfidf_score(self, query, doc, applyBM25_and_IDF=False):
         q = self.text2TFIDF(query)
         d = self.text2TFIDF(doc, applyBM25_and_IDF)
@@ -147,9 +158,12 @@ class Engine():
 
         relevances = np.zeros(self.df_clean.shape[0])
 
+        # compute relevance scores for all docs given a query using
+        # BM25 with TF-IDF and document length normalization
         for index, row in self.df_clean.iterrows():
             relevances[index] = self.tfidf_score(query, row[self.collection_col], True)
 
+        # sort and print top 5 and bottom 5 most relevant documents
         sorted_indices = np.argsort(relevances)[::-1]
 
         print("\n\tTop 5 most relevant movies:")
@@ -174,6 +188,7 @@ class Engine():
         scores = []
         df = self.df_clean.copy()
 
+        # count how many words in the query appear in doc
         for plot in df[self.collection_col]:
             plot = set(plot.split())
             count = 0
@@ -190,6 +205,7 @@ class Engine():
         print("Baseline results for:", q)
         print()
 
+        # sort and print 5 most relevant documents
         for i in range(5):
             print(i + 1, "-", temp[self.title_col].iloc[i])
             print("Score:", temp["base_score"].iloc[i])
